@@ -6,3 +6,7 @@ type ViewLoaded struct {
 	Tab int
 	Err error
 }
+
+// DashboardUpdated is posted by subscription goroutines when new realtime
+// or app stats data arrives, triggering a redraw.
+type DashboardUpdated struct{}
