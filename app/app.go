@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"log"
+	"time"
 
 	"git.sr.ht/~rockorager/vaxis"
 	"git.sr.ht/~rockorager/vaxis/vxfw"
@@ -18,18 +20,25 @@ type App struct {
 	pools      *views.PoolsView
 	datasets   *views.DatasetsView
 	snapshots  *views.SnapshotsView
+	postEvent  func(vaxis.Event)
 }
 
 // New creates the root App widget connected to the given services.
-func New(svc *internal.Services, serverName string) *App {
+func New(svc *internal.Services, serverName string, staleTTL time.Duration) *App {
 	return &App{
 		services:   svc,
 		serverName: serverName,
 		tabBar:     widgets.NewTabBar([]string{"Pools", "Datasets", "Snapshots"}),
-		pools:      views.NewPoolsView(svc.Datasets),
-		datasets:   views.NewDatasetsView(svc.Datasets),
-		snapshots:  views.NewSnapshotsView(svc.Snapshots),
+		pools:      views.NewPoolsView(views.PoolsViewParams{Service: svc.Datasets, StaleTTL: staleTTL}),
+		datasets:   views.NewDatasetsView(views.DatasetsViewParams{Service: svc.Datasets, StaleTTL: staleTTL}),
+		snapshots:  views.NewSnapshotsView(views.SnapshotsViewParams{Service: svc.Snapshots, StaleTTL: staleTTL}),
 	}
+}
+
+// SetPostEvent sets the function used to post events to the vaxis event loop.
+// Must be called before LoadAll.
+func (a *App) SetPostEvent(fn func(vaxis.Event)) {
+	a.postEvent = fn
 }
 
 // ActiveTab returns the current tab index.
@@ -45,6 +54,27 @@ func (a *App) SetTab(i int) {
 // ServerName returns the connected server profile name.
 func (a *App) ServerName() string {
 	return a.serverName
+}
+
+// LoadAll loads data for all views in parallel using goroutines.
+// Each view posts a ViewLoaded event when done.
+func (a *App) LoadAll(ctx context.Context) {
+	for tab := 0; tab < 3; tab++ {
+		go func(t int) {
+			var err error
+			switch t {
+			case 0:
+				err = a.pools.Load(ctx)
+			case 1:
+				err = a.datasets.Load(ctx)
+			case 2:
+				err = a.snapshots.Load(ctx)
+			}
+			if a.postEvent != nil {
+				a.postEvent(views.ViewLoaded{Tab: t, Err: err})
+			}
+		}(tab)
+	}
 }
 
 // LoadActiveView fetches data for the currently active view.
@@ -104,6 +134,9 @@ func (a *App) CaptureEvent(ev vaxis.Event) (vxfw.Command, error) {
 		switch {
 		case ev.Matches('q'):
 			return vxfw.QuitCmd{}, nil
+		case ev.Matches('r'):
+			_ = a.LoadActiveView(context.Background())
+			return vxfw.ConsumeAndRedraw(), nil
 		case ev.Matches('1'):
 			a.tabBar.SetActive(0)
 		case ev.Matches('2'):
@@ -118,20 +151,46 @@ func (a *App) CaptureEvent(ev vaxis.Event) (vxfw.Command, error) {
 			return nil, nil
 		}
 		if a.tabBar.Active() != prev {
-			_ = a.LoadActiveView(context.Background())
+			a.refetchIfStale()
 		}
 		return vxfw.ConsumeAndRedraw(), nil
 	}
 	return nil, nil
 }
 
-// HandleEvent delegates to the active view.
-func (a *App) HandleEvent(ev vaxis.Event, phase vxfw.EventPhase) (vxfw.Command, error) {
-	type handler interface {
-		HandleEvent(vaxis.Event, vxfw.EventPhase) (vxfw.Command, error)
+// refetchIfStale reloads the active view's data if it has become stale.
+func (a *App) refetchIfStale() {
+	switch a.tabBar.Active() {
+	case 0:
+		if a.pools.Stale() {
+			_ = a.pools.Load(context.Background())
+		}
+	case 1:
+		if a.datasets.Stale() {
+			_ = a.datasets.Load(context.Background())
+		}
+	case 2:
+		if a.snapshots.Stale() {
+			_ = a.snapshots.Load(context.Background())
+		}
 	}
-	if h, ok := a.activeView().(handler); ok {
-		return h.HandleEvent(ev, phase)
+}
+
+// HandleEvent delegates to the active view, and handles custom events.
+func (a *App) HandleEvent(ev vaxis.Event, phase vxfw.EventPhase) (vxfw.Command, error) {
+	switch ev := ev.(type) {
+	case views.ViewLoaded:
+		if ev.Err != nil {
+			log.Printf("error loading tab %d: %v", ev.Tab, ev.Err)
+		}
+		return vxfw.RedrawCmd{}, nil
+	default:
+		type handler interface {
+			HandleEvent(vaxis.Event, vxfw.EventPhase) (vxfw.Command, error)
+		}
+		if h, ok := a.activeView().(handler); ok {
+			return h.HandleEvent(ev, phase)
+		}
 	}
 	return nil, nil
 }

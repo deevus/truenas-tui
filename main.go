@@ -116,17 +116,15 @@ func main() {
 		truenas.NewSnapshotService(wsClient, version),
 	)
 
-	root := app.New(svc, serverName)
-
-	if err := root.LoadActiveView(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading data: %v\n", err)
-		os.Exit(1)
-	}
+	root := app.New(svc, serverName, 30*time.Second)
 
 	vxApp, err := vxfw.NewApp(vaxis.Options{})
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	root.SetPostEvent(vxApp.PostEvent)
+	root.LoadAll(ctx)
 
 	if err := vxApp.Run(root); err != nil {
 		log.Fatal(err)
