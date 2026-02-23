@@ -68,8 +68,8 @@ api_key = "1-abc"
 [servers.home.ssh]
 host = "truenas.local"
 port = 22
-user = "root"
-private_key_path = "~/.ssh/id_ed25519"
+username = "root"
+private_key_path = "/home/test/.ssh/id_ed25519"
 host_key_fingerprint = "SHA256:abc123"
 `), 0o644)
 	if err != nil {
@@ -91,8 +91,108 @@ host_key_fingerprint = "SHA256:abc123"
 	if ssh.Port != 22 {
 		t.Errorf("expected ssh port 22, got %d", ssh.Port)
 	}
-	if ssh.User != "root" {
-		t.Errorf("expected ssh user root, got %s", ssh.User)
+	if ssh.Username != "root" {
+		t.Errorf("expected ssh username root, got %s", ssh.Username)
+	}
+}
+
+func TestLoad_SSHDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(path, []byte(`
+[servers.home]
+host = "truenas.local"
+port = 443
+username = "admin"
+api_key = "1-abc"
+
+[servers.home.ssh]
+private_key_path = "/home/test/.ssh/id_ed25519"
+host_key_fingerprint = "SHA256:abc123"
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ssh := cfg.Servers["home"].SSH
+	if ssh == nil {
+		t.Fatal("expected SSH config")
+	}
+	if ssh.Port != 22 {
+		t.Errorf("expected default ssh port 22, got %d", ssh.Port)
+	}
+	if ssh.Username != "admin" {
+		t.Errorf("expected ssh username to default to server username 'admin', got %s", ssh.Username)
+	}
+}
+
+func TestLoad_ExpandTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	err = os.WriteFile(path, []byte(`
+[servers.home]
+host = "truenas.local"
+port = 443
+username = "admin"
+api_key = "1-abc"
+
+[servers.home.ssh]
+private_key_path = "~/.ssh/id_ed25519"
+host_key_fingerprint = "SHA256:abc123"
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := filepath.Join(home, ".ssh", "id_ed25519")
+	if cfg.Servers["home"].SSH.PrivateKeyPath != expected {
+		t.Errorf("expected expanded path %s, got %s", expected, cfg.Servers["home"].SSH.PrivateKeyPath)
+	}
+}
+
+func TestLoad_ExpandEnvVar(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TEST_KEY_DIR", "/custom/keys")
+
+	path := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(path, []byte(`
+[servers.home]
+host = "truenas.local"
+port = 443
+username = "admin"
+api_key = "1-abc"
+
+[servers.home.ssh]
+private_key_path = "$TEST_KEY_DIR/id_ed25519"
+host_key_fingerprint = "SHA256:abc123"
+`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := "/custom/keys/id_ed25519"
+	if cfg.Servers["home"].SSH.PrivateKeyPath != expected {
+		t.Errorf("expected expanded path %s, got %s", expected, cfg.Servers["home"].SSH.PrivateKeyPath)
 	}
 }
 

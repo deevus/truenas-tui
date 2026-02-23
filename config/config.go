@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -28,7 +29,7 @@ type ServerConfig struct {
 type SSHConfig struct {
 	Host               string `toml:"host"`
 	Port               int    `toml:"port"`
-	User               string `toml:"user"`
+	Username           string `toml:"username"`
 	PrivateKeyPath     string `toml:"private_key_path"`
 	HostKeyFingerprint string `toml:"host_key_fingerprint"`
 }
@@ -43,6 +44,7 @@ func DefaultPath() string {
 }
 
 // LoadFrom reads and parses the config file at the given path.
+// It applies defaults for SSH config fields after parsing.
 func LoadFrom(path string) (*Config, error) {
 	var cfg Config
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
@@ -51,7 +53,27 @@ func LoadFrom(path string) (*Config, error) {
 	if len(cfg.Servers) == 0 {
 		return nil, fmt.Errorf("config has no servers defined")
 	}
+	for name, server := range cfg.Servers {
+		if server.SSH != nil {
+			if server.SSH.Port == 0 {
+				server.SSH.Port = 22
+			}
+			if server.SSH.Username == "" {
+				server.SSH.Username = server.Username
+			}
+			server.SSH.PrivateKeyPath = expandPath(server.SSH.PrivateKeyPath)
+		}
+		cfg.Servers[name] = server
+	}
 	return &cfg, nil
+}
+
+// expandPath expands ~ to $HOME and then expands all environment variables.
+func expandPath(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		path = "$HOME" + path[1:]
+	}
+	return os.ExpandEnv(path)
 }
 
 // ServerNames returns the sorted list of server profile names.
