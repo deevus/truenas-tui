@@ -100,25 +100,27 @@ func (a *App) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
 func (a *App) CaptureEvent(ev vaxis.Event) (vxfw.Command, error) {
 	switch ev := ev.(type) {
 	case vaxis.Key:
+		prev := a.tabBar.Active()
 		switch {
 		case ev.Matches('q'):
 			return vxfw.QuitCmd{}, nil
 		case ev.Matches('1'):
 			a.tabBar.SetActive(0)
-			return vxfw.ConsumeAndRedraw(), nil
 		case ev.Matches('2'):
 			a.tabBar.SetActive(1)
-			return vxfw.ConsumeAndRedraw(), nil
 		case ev.Matches('3'):
 			a.tabBar.SetActive(2)
-			return vxfw.ConsumeAndRedraw(), nil
 		case ev.Matches(vaxis.KeyTab):
 			a.tabBar.Next()
-			return vxfw.ConsumeAndRedraw(), nil
 		case ev.Matches(vaxis.KeyTab, vaxis.ModShift):
 			a.tabBar.Prev()
-			return vxfw.ConsumeAndRedraw(), nil
+		default:
+			return nil, nil
 		}
+		if a.tabBar.Active() != prev {
+			_ = a.LoadActiveView(context.Background())
+		}
+		return vxfw.ConsumeAndRedraw(), nil
 	}
 	return nil, nil
 }
