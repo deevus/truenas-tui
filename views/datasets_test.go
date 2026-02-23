@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"git.sr.ht/~rockorager/vaxis"
+	"git.sr.ht/~rockorager/vaxis/vxfw"
 	"github.com/deevus/truenas-go"
 	"github.com/deevus/truenas-tui/views"
 )
@@ -61,4 +63,69 @@ func TestDatasetsView_ItemCount(t *testing.T) {
 	if dv.ItemCount() != 1 {
 		t.Errorf("expected 1 item after load, got %d", dv.ItemCount())
 	}
+}
+
+func TestDatasetsView_Draw_WithData(t *testing.T) {
+	mock := &truenas.MockDatasetService{
+		ListDatasetsFunc: func(ctx context.Context) ([]truenas.Dataset, error) {
+			return []truenas.Dataset{
+				{ID: "tank/data", Name: "data", Pool: "tank", Mountpoint: "/mnt/tank/data", Compression: "lz4", Used: 1073741824, Available: 549755813888},
+				{ID: "tank/media", Name: "media", Pool: "tank", Mountpoint: "/mnt/tank/media", Compression: "off", Used: 0, Available: 549755813888},
+			}, nil
+		},
+	}
+
+	dv := views.NewDatasetsView(mock)
+	_ = dv.Load(context.Background())
+
+	ctx := testDrawContext(100, 10)
+	s, err := dv.Draw(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Size.Width != 100 {
+		t.Errorf("expected surface width=100, got %d", s.Size.Width)
+	}
+	if s.Size.Height != 10 {
+		t.Errorf("expected surface height=10, got %d", s.Size.Height)
+	}
+}
+
+func TestDatasetsView_Draw_Empty(t *testing.T) {
+	mock := &truenas.MockDatasetService{
+		ListDatasetsFunc: func(ctx context.Context) ([]truenas.Dataset, error) {
+			return []truenas.Dataset{}, nil
+		},
+	}
+
+	dv := views.NewDatasetsView(mock)
+	_ = dv.Load(context.Background())
+
+	ctx := testDrawContext(80, 10)
+	s, err := dv.Draw(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Size.Width != 80 {
+		t.Errorf("expected surface width=80, got %d", s.Size.Width)
+	}
+}
+
+func TestDatasetsView_HandleEvent(t *testing.T) {
+	mock := &truenas.MockDatasetService{
+		ListDatasetsFunc: func(ctx context.Context) ([]truenas.Dataset, error) {
+			return []truenas.Dataset{
+				{ID: "tank/data", Name: "data", Pool: "tank"},
+			}, nil
+		},
+	}
+
+	dv := views.NewDatasetsView(mock)
+	_ = dv.Load(context.Background())
+
+	cmd, err := dv.HandleEvent(vaxis.Key{Keycode: 'j'}, vxfw.EventPhase(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_ = cmd
 }

@@ -3,8 +3,24 @@ package widgets_test
 import (
 	"testing"
 
+	"git.sr.ht/~rockorager/vaxis"
+	"git.sr.ht/~rockorager/vaxis/vxfw"
 	"github.com/deevus/truenas-tui/widgets"
 )
+
+func testDrawContext(w, h uint16) vxfw.DrawContext {
+	return vxfw.DrawContext{
+		Max: vxfw.Size{Width: w, Height: h},
+		Min: vxfw.Size{},
+		Characters: func(s string) []vaxis.Character {
+			chars := make([]vaxis.Character, 0, len(s))
+			for _, r := range s {
+				chars = append(chars, vaxis.Character{Grapheme: string(r), Width: 1})
+			}
+			return chars
+		},
+	}
+}
 
 func TestTabBar_Labels(t *testing.T) {
 	tb := widgets.NewTabBar([]string{"Pools", "Datasets", "Snapshots"})
@@ -57,5 +73,56 @@ func TestTabBar_SetActive(t *testing.T) {
 	tb.SetActive(-1)
 	if tb.Active() != 2 {
 		t.Errorf("expected active=2 (clamped negative), got %d", tb.Active())
+	}
+}
+
+func TestTabBar_Draw(t *testing.T) {
+	tb := widgets.NewTabBar([]string{"Pools", "Datasets", "Snapshots"})
+	ctx := testDrawContext(80, 1)
+
+	s, err := tb.Draw(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if s.Size.Height != 1 {
+		t.Errorf("expected surface height=1, got %d", s.Size.Height)
+	}
+	if s.Size.Width != 80 {
+		t.Errorf("expected surface width=80, got %d", s.Size.Width)
+	}
+}
+
+func TestTabBar_Draw_ActiveTabChanges(t *testing.T) {
+	tb := widgets.NewTabBar([]string{"A", "B", "C"})
+	ctx := testDrawContext(40, 1)
+
+	// Draw with tab 0 active
+	s1, err := tb.Draw(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s1.Size.Height != 1 {
+		t.Errorf("expected height=1, got %d", s1.Size.Height)
+	}
+
+	// Draw with tab 1 active
+	tb.SetActive(1)
+	s2, err := tb.Draw(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s2.Size.Height != 1 {
+		t.Errorf("expected height=1, got %d", s2.Size.Height)
+	}
+
+	// Draw with tab 2 active
+	tb.SetActive(2)
+	s3, err := tb.Draw(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s3.Size.Height != 1 {
+		t.Errorf("expected height=1, got %d", s3.Size.Height)
 	}
 }
