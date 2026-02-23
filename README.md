@@ -18,23 +18,10 @@ host = "truenas.local"
 port = 443
 username = "admin"
 api_key = "1-your-api-key"
-
-# SSH is optional — used as fallback for version detection
-[servers.home.ssh]
-host = "truenas.local"        # defaults to server host
-port = 22                     # defaults to 22
-username = "root"             # defaults to server username
-private_key_path = "~/.ssh/id_ed25519"
-host_key_fingerprint = "SHA256:..."
+insecure_skip_verify = true     # skip TLS certificate verification
 ```
 
-Generate an API key in the TrueNAS web UI under **Credentials > API Keys**.
-
-The SSH section is optional. When configured, it provides a fallback transport for version detection. Paths in `private_key_path` support `~` and environment variable expansion. The `host_key_fingerprint` can be obtained with:
-
-```bash
-ssh-keyscan truenas.local 2>/dev/null | ssh-keygen -lf -
-```
+Generate an API key in the TrueNAS web UI under **Credentials > API Keys**. TrueNAS uses a self-signed certificate by default, so `insecure_skip_verify = true` is needed unless you've configured a trusted certificate.
 
 ## Usage
 
@@ -53,7 +40,8 @@ truenas-tui --config /path/to/config.toml
 
 | Key | Action |
 |-----|--------|
+| `q` | Quit |
 | `1` / `2` / `3` | Switch tabs (Pools / Datasets / Snapshots) |
 | `Tab` / `Shift+Tab` | Next / previous tab |
-| `j` / `k` or arrows | Navigate list |
-| `q` | Quit |
+| `j` / `k` / `Down` / `Up` | Navigate list |
+| `r` | Refresh current view |
