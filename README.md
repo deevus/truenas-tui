@@ -2,6 +2,8 @@
 
 A terminal UI for managing TrueNAS servers.
 
+![Dashboard](docs/dashboard.png)
+
 ## Install
 
 ```bash
@@ -41,7 +43,7 @@ truenas-tui --config /path/to/config.toml
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
-| `1` / `2` / `3` | Switch tabs (Pools / Datasets / Snapshots) |
+| `1` / `2` / `3` / `4` | Switch tabs (Dashboard / Pools / Datasets / Snapshots) |
 | `Tab` / `Shift+Tab` | Next / previous tab |
 | `j` / `k` / `Down` / `Up` | Navigate list |
 | `r` | Refresh current view |
