@@ -120,6 +120,10 @@ func main() {
 			return internal.NewServices(
 				truenas.NewDatasetService(wsClient, version),
 				truenas.NewSnapshotService(wsClient, version),
+				truenas.NewSystemService(wsClient, version),
+				truenas.NewReportingService(wsClient, version),
+				truenas.NewInterfaceService(wsClient, version),
+				truenas.NewAppService(wsClient, version),
 			), nil
 		},
 	})

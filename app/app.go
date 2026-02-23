@@ -38,6 +38,7 @@ type App struct {
 	staleTTL   time.Duration
 	tabBar     *widgets.TabBar
 	services   *internal.Services
+	dashboard  *views.DashboardView
 	pools      *views.PoolsView
 	datasets   *views.DatasetsView
 	snapshots  *views.SnapshotsView
@@ -56,7 +57,7 @@ func New(p Params) *App {
 		serverName: p.ServerName,
 		staleTTL:   p.StaleTTL,
 		connectFn:  p.Connect,
-		tabBar:     widgets.NewTabBar([]string{"Pools", "Datasets", "Snapshots"}),
+		tabBar:     widgets.NewTabBar([]string{"Dashboard", "Pools", "Datasets", "Snapshots"}),
 	}
 	if p.Services != nil {
 		a.initServices(p.Services)
@@ -68,6 +69,13 @@ func New(p Params) *App {
 // as connected.
 func (a *App) initServices(svc *internal.Services) {
 	a.services = svc
+	a.dashboard = views.NewDashboardView(views.DashboardViewParams{
+		System:     svc.System,
+		Reporting:  svc.Reporting,
+		Interfaces: svc.Interfaces,
+		Apps:       svc.Apps,
+		PostEvent:  a.postEvent,
+	})
 	a.pools = views.NewPoolsView(views.PoolsViewParams{Service: svc.Datasets, StaleTTL: a.staleTTL})
 	a.datasets = views.NewDatasetsView(views.DatasetsViewParams{Service: svc.Datasets, StaleTTL: a.staleTTL})
 	a.snapshots = views.NewSnapshotsView(views.SnapshotsViewParams{Service: svc.Snapshots, StaleTTL: a.staleTTL})
@@ -105,15 +113,17 @@ func (a *App) LoadAll(ctx context.Context) {
 	if !a.connected {
 		return
 	}
-	for tab := 0; tab < 3; tab++ {
+	for tab := 0; tab < 4; tab++ {
 		go func(t int) {
 			var err error
 			switch t {
 			case 0:
-				err = a.pools.Load(ctx)
+				err = a.dashboard.Load(ctx)
 			case 1:
-				err = a.datasets.Load(ctx)
+				err = a.pools.Load(ctx)
 			case 2:
+				err = a.datasets.Load(ctx)
+			case 3:
 				err = a.snapshots.Load(ctx)
 			}
 			if a.postEvent != nil {
@@ -130,10 +140,12 @@ func (a *App) LoadActiveView(ctx context.Context) error {
 	}
 	switch a.tabBar.Active() {
 	case 0:
-		return a.pools.Load(ctx)
+		return a.dashboard.Load(ctx)
 	case 1:
-		return a.datasets.Load(ctx)
+		return a.pools.Load(ctx)
 	case 2:
+		return a.datasets.Load(ctx)
+	case 3:
 		return a.snapshots.Load(ctx)
 	}
 	return nil
@@ -145,13 +157,15 @@ func (a *App) activeView() vxfw.Widget {
 	}
 	switch a.tabBar.Active() {
 	case 0:
-		return a.pools
+		return a.dashboard
 	case 1:
-		return a.datasets
+		return a.pools
 	case 2:
+		return a.datasets
+	case 3:
 		return a.snapshots
 	default:
-		return a.pools
+		return a.dashboard
 	}
 }
 
@@ -220,6 +234,8 @@ func (a *App) CaptureEvent(ev vaxis.Event) (vxfw.Command, error) {
 			a.tabBar.SetActive(1)
 		case ev.Matches('3'):
 			a.tabBar.SetActive(2)
+		case ev.Matches('4'):
+			a.tabBar.SetActive(3)
 		case ev.Matches(vaxis.KeyTab):
 			a.tabBar.Next()
 		case ev.Matches(vaxis.KeyTab, vaxis.ModShift):
@@ -257,10 +273,13 @@ func (a *App) refetchIfStale() {
 	var stale bool
 	switch a.tabBar.Active() {
 	case 0:
-		stale = a.pools.Stale()
+		// Dashboard is streaming, never stale
+		return
 	case 1:
-		stale = a.datasets.Stale()
+		stale = a.pools.Stale()
 	case 2:
+		stale = a.datasets.Stale()
+	case 3:
 		stale = a.snapshots.Stale()
 	}
 	if stale {
@@ -294,6 +313,12 @@ func (a *App) HandleEvent(ev vaxis.Event, phase vxfw.EventPhase) (vxfw.Command, 
 		if ev.Err != nil {
 			log.Printf("error loading tab %d: %v", ev.Tab, ev.Err)
 		}
+		// Start dashboard subscriptions once it has loaded
+		if ev.Tab == 0 && ev.Err == nil && a.dashboard != nil {
+			a.dashboard.StartSubscriptions(context.Background())
+		}
+		return vxfw.RedrawCmd{}, nil
+	case views.DashboardUpdated:
 		return vxfw.RedrawCmd{}, nil
 	default:
 		type handler interface {

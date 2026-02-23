@@ -35,6 +35,25 @@ func newTestServices() *internal.Services {
 	return internal.NewServices(
 		&truenas.MockDatasetService{},
 		&truenas.MockSnapshotService{},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{Hostname: "test", Model: "Test"}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) {
+				return "TrueNAS-TEST", nil
+			},
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) {
+				return nil, nil
+			},
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) {
+				return nil, nil
+			},
+		},
 	)
 }
 
@@ -56,6 +75,40 @@ func newTestServicesWithData() *internal.Services {
 			ListFunc: func(ctx context.Context) ([]truenas.Snapshot, error) {
 				return []truenas.Snapshot{
 					{ID: "tank/data@snap1", Dataset: "tank/data", SnapshotName: "snap1"},
+				}, nil
+			},
+		},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{
+					Hostname:      "truenas",
+					Model:         "AMD Ryzen 5 2400G",
+					Cores:         8,
+					PhysicalCores: 4,
+					UptimeSeconds: 259200,
+				}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) {
+				return "TrueNAS-25.04.0", nil
+			},
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) {
+				return []truenas.NetworkInterface{
+					{
+						ID: "enp24s0", Name: "enp24s0",
+						Type:  truenas.InterfaceTypePhysical,
+						State: truenas.InterfaceState{LinkState: truenas.LinkStateUp},
+					},
+				}, nil
+			},
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) {
+				return []truenas.App{
+					{Name: "tailscale", State: "RUNNING"},
+					{Name: "sonarr", State: "RUNNING"},
 				}, nil
 			},
 		},
@@ -100,9 +153,9 @@ func TestApp_SetTab(t *testing.T) {
 	if a.ActiveTab() != 1 {
 		t.Errorf("expected tab 1, got %d", a.ActiveTab())
 	}
-	a.SetTab(2)
-	if a.ActiveTab() != 2 {
-		t.Errorf("expected tab 2, got %d", a.ActiveTab())
+	a.SetTab(3)
+	if a.ActiveTab() != 3 {
+		t.Errorf("expected tab 3, got %d", a.ActiveTab())
 	}
 }
 
@@ -113,10 +166,21 @@ func TestApp_ServerName(t *testing.T) {
 	}
 }
 
-func TestApp_LoadActiveView_Tab0_Pools(t *testing.T) {
+func TestApp_LoadActiveView_Tab0_Dashboard(t *testing.T) {
 	svc := newTestServicesWithData()
 	a := newApp(svc)
 	a.SetTab(0)
+
+	err := a.LoadActiveView(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error loading dashboard: %v", err)
+	}
+}
+
+func TestApp_LoadActiveView_Tab1_Pools(t *testing.T) {
+	svc := newTestServicesWithData()
+	a := newApp(svc)
+	a.SetTab(1)
 
 	err := a.LoadActiveView(context.Background())
 	if err != nil {
@@ -124,10 +188,10 @@ func TestApp_LoadActiveView_Tab0_Pools(t *testing.T) {
 	}
 }
 
-func TestApp_LoadActiveView_Tab1_Datasets(t *testing.T) {
+func TestApp_LoadActiveView_Tab2_Datasets(t *testing.T) {
 	svc := newTestServicesWithData()
 	a := newApp(svc)
-	a.SetTab(1)
+	a.SetTab(2)
 
 	err := a.LoadActiveView(context.Background())
 	if err != nil {
@@ -135,10 +199,10 @@ func TestApp_LoadActiveView_Tab1_Datasets(t *testing.T) {
 	}
 }
 
-func TestApp_LoadActiveView_Tab2_Snapshots(t *testing.T) {
+func TestApp_LoadActiveView_Tab3_Snapshots(t *testing.T) {
 	svc := newTestServicesWithData()
 	a := newApp(svc)
-	a.SetTab(2)
+	a.SetTab(3)
 
 	err := a.LoadActiveView(context.Background())
 	if err != nil {
@@ -154,7 +218,7 @@ func TestApp_LoadActiveView_NotConnected(t *testing.T) {
 	}
 }
 
-func TestApp_LoadActiveView_Error_Propagation(t *testing.T) {
+func TestApp_LoadActiveView_Error_Pools(t *testing.T) {
 	svc := internal.NewServices(
 		&truenas.MockDatasetService{
 			ListPoolsFunc: func(ctx context.Context) ([]truenas.Pool, error) {
@@ -162,9 +226,22 @@ func TestApp_LoadActiveView_Error_Propagation(t *testing.T) {
 			},
 		},
 		&truenas.MockSnapshotService{},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{Hostname: "test", Model: "Test"}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) { return "v1", nil },
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) { return nil, nil },
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) { return nil, nil },
+		},
 	)
 	a := newApp(svc)
-	a.SetTab(0)
+	a.SetTab(1)
 
 	err := a.LoadActiveView(context.Background())
 	if err == nil {
@@ -180,9 +257,22 @@ func TestApp_LoadActiveView_Error_Datasets(t *testing.T) {
 			},
 		},
 		&truenas.MockSnapshotService{},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{Hostname: "test", Model: "Test"}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) { return "v1", nil },
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) { return nil, nil },
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) { return nil, nil },
+		},
 	)
 	a := newApp(svc)
-	a.SetTab(1)
+	a.SetTab(2)
 
 	err := a.LoadActiveView(context.Background())
 	if err == nil {
@@ -198,9 +288,22 @@ func TestApp_LoadActiveView_Error_Snapshots(t *testing.T) {
 				return nil, context.DeadlineExceeded
 			},
 		},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{Hostname: "test", Model: "Test"}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) { return "v1", nil },
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) { return nil, nil },
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) { return nil, nil },
+		},
 	)
 	a := newApp(svc)
-	a.SetTab(2)
+	a.SetTab(3)
 
 	err := a.LoadActiveView(context.Background())
 	if err == nil {
@@ -213,16 +316,16 @@ func TestApp_Draw(t *testing.T) {
 	a := newApp(svc)
 	_ = a.LoadActiveView(context.Background())
 
-	ctx := testDrawContext(80, 24)
+	ctx := testDrawContext(100, 30)
 	s, err := a.Draw(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if s.Size.Width != 80 {
-		t.Errorf("expected surface width=80, got %d", s.Size.Width)
+	if s.Size.Width != 100 {
+		t.Errorf("expected surface width=100, got %d", s.Size.Width)
 	}
-	if s.Size.Height != 24 {
-		t.Errorf("expected surface height=24, got %d", s.Size.Height)
+	if s.Size.Height != 30 {
+		t.Errorf("expected surface height=30, got %d", s.Size.Height)
 	}
 }
 
@@ -230,11 +333,11 @@ func TestApp_Draw_AllTabs(t *testing.T) {
 	svc := newTestServicesWithData()
 	a := newApp(svc)
 
-	for tab := 0; tab < 3; tab++ {
+	for tab := 0; tab < 4; tab++ {
 		a.SetTab(tab)
 		_ = a.LoadActiveView(context.Background())
 
-		ctx := testDrawContext(80, 24)
+		ctx := testDrawContext(100, 30)
 		_, err := a.Draw(ctx)
 		if err != nil {
 			t.Fatalf("unexpected error drawing tab %d: %v", tab, err)
@@ -245,7 +348,7 @@ func TestApp_Draw_AllTabs(t *testing.T) {
 func TestApp_Draw_BeforeLoad(t *testing.T) {
 	a := newApp(newTestServices())
 
-	ctx := testDrawContext(80, 24)
+	ctx := testDrawContext(100, 30)
 	_, err := a.Draw(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error drawing before load: %v", err)
@@ -308,7 +411,7 @@ func TestApp_CaptureEvent_QuitWhenNotConnected(t *testing.T) {
 func TestApp_CaptureEvent_IgnoredWhenNotConnected(t *testing.T) {
 	a := app.New(app.Params{ServerName: "test-server", StaleTTL: testStaleTTL})
 
-	for _, key := range []rune{'r', '1', '2', '3'} {
+	for _, key := range []rune{'r', '1', '2', '3', '4'} {
 		cmd, err := a.CaptureEvent(vaxis.Key{Keycode: key})
 		if err != nil {
 			t.Fatalf("unexpected error for key '%c': %v", key, err)
@@ -329,6 +432,7 @@ func TestApp_CaptureEvent_NumberKeys(t *testing.T) {
 		{'1', 0},
 		{'2', 1},
 		{'3', 2},
+		{'4', 3},
 	}
 
 	for _, tc := range tests {
@@ -370,8 +474,8 @@ func TestApp_CaptureEvent_ShiftTab(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected non-nil command for Shift+Tab")
 	}
-	if a.ActiveTab() != 2 {
-		t.Errorf("expected tab 2 after Shift+Tab, got %d", a.ActiveTab())
+	if a.ActiveTab() != 3 {
+		t.Errorf("expected tab 3 after Shift+Tab, got %d", a.ActiveTab())
 	}
 }
 
@@ -428,7 +532,7 @@ func TestApp_HandleEvent_AllTabs(t *testing.T) {
 	svc := newTestServicesWithData()
 	a := newApp(svc)
 
-	for tab := 0; tab < 3; tab++ {
+	for tab := 0; tab < 4; tab++ {
 		a.SetTab(tab)
 		_ = a.LoadActiveView(context.Background())
 
@@ -518,7 +622,7 @@ func TestApp_HandleEvent_Connected(t *testing.T) {
 
 	var mu sync.Mutex
 	var events []views.ViewLoaded
-	done := make(chan struct{}, 3)
+	done := make(chan struct{}, 4)
 
 	a.SetPostEvent(func(ev vaxis.Event) {
 		if vl, ok := ev.(views.ViewLoaded); ok {
@@ -541,8 +645,8 @@ func TestApp_HandleEvent_Connected(t *testing.T) {
 		t.Error("expected connected after Connected event")
 	}
 
-	// Wait for LoadAll goroutines
-	for i := 0; i < 3; i++ {
+	// Wait for LoadAll goroutines (4 tabs now)
+	for i := 0; i < 4; i++ {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
@@ -552,8 +656,8 @@ func TestApp_HandleEvent_Connected(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(events) != 3 {
-		t.Fatalf("expected 3 ViewLoaded events, got %d", len(events))
+	if len(events) != 4 {
+		t.Fatalf("expected 4 ViewLoaded events, got %d", len(events))
 	}
 }
 
@@ -575,7 +679,7 @@ func TestApp_HandleEvent_ConnectFailed(t *testing.T) {
 func TestApp_HandleEvent_ViewLoaded(t *testing.T) {
 	a := newApp(newTestServices())
 
-	cmd, err := a.HandleEvent(views.ViewLoaded{Tab: 0, Err: nil}, vxfw.EventPhase(0))
+	cmd, err := a.HandleEvent(views.ViewLoaded{Tab: 1, Err: nil}, vxfw.EventPhase(0))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -587,12 +691,24 @@ func TestApp_HandleEvent_ViewLoaded(t *testing.T) {
 func TestApp_HandleEvent_ViewLoaded_WithError(t *testing.T) {
 	a := newApp(newTestServices())
 
-	cmd, err := a.HandleEvent(views.ViewLoaded{Tab: 1, Err: context.DeadlineExceeded}, vxfw.EventPhase(0))
+	cmd, err := a.HandleEvent(views.ViewLoaded{Tab: 2, Err: context.DeadlineExceeded}, vxfw.EventPhase(0))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := cmd.(vxfw.RedrawCmd); !ok {
 		t.Errorf("expected RedrawCmd even on load error, got %T", cmd)
+	}
+}
+
+func TestApp_HandleEvent_DashboardUpdated(t *testing.T) {
+	a := newApp(newTestServices())
+
+	cmd, err := a.HandleEvent(views.DashboardUpdated{}, vxfw.EventPhase(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := cmd.(vxfw.RedrawCmd); !ok {
+		t.Errorf("expected RedrawCmd for DashboardUpdated, got %T", cmd)
 	}
 }
 
@@ -615,7 +731,7 @@ func TestApp_LoadAll(t *testing.T) {
 
 	var mu sync.Mutex
 	var events []views.ViewLoaded
-	done := make(chan struct{}, 3)
+	done := make(chan struct{}, 4)
 
 	a.SetPostEvent(func(ev vaxis.Event) {
 		if vl, ok := ev.(views.ViewLoaded); ok {
@@ -628,7 +744,7 @@ func TestApp_LoadAll(t *testing.T) {
 
 	a.LoadAll(context.Background())
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
@@ -639,8 +755,8 @@ func TestApp_LoadAll(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if len(events) != 3 {
-		t.Fatalf("expected 3 ViewLoaded events, got %d", len(events))
+	if len(events) != 4 {
+		t.Fatalf("expected 4 ViewLoaded events, got %d", len(events))
 	}
 
 	tabs := map[int]bool{}
@@ -650,7 +766,7 @@ func TestApp_LoadAll(t *testing.T) {
 		}
 		tabs[ev.Tab] = true
 	}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		if !tabs[i] {
 			t.Errorf("missing ViewLoaded event for tab %d", i)
 		}
@@ -669,12 +785,25 @@ func TestApp_LoadAll_WithErrors(t *testing.T) {
 				return nil, context.Canceled
 			},
 		},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{Hostname: "test", Model: "Test"}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) { return "v1", nil },
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) { return nil, nil },
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) { return nil, nil },
+		},
 	)
 	a := newApp(svc)
 
 	var mu sync.Mutex
 	var events []views.ViewLoaded
-	done := make(chan struct{}, 3)
+	done := make(chan struct{}, 4)
 
 	a.SetPostEvent(func(ev vaxis.Event) {
 		if vl, ok := ev.(views.ViewLoaded); ok {
@@ -687,7 +816,7 @@ func TestApp_LoadAll_WithErrors(t *testing.T) {
 
 	a.LoadAll(context.Background())
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
@@ -727,6 +856,19 @@ func TestApp_TabSwitch_RefetchesStale(t *testing.T) {
 			},
 		},
 		&truenas.MockSnapshotService{},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{Hostname: "test", Model: "Test"}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) { return "v1", nil },
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) { return nil, nil },
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) { return nil, nil },
+		},
 	)
 
 	done := make(chan struct{}, 1)
@@ -734,14 +876,14 @@ func TestApp_TabSwitch_RefetchesStale(t *testing.T) {
 	a.SetPostEvent(func(ev vaxis.Event) {
 		done <- struct{}{}
 	})
-	a.SetTab(1)
+	a.SetTab(2) // datasets tab
 	_ = a.LoadActiveView(context.Background())
 	initial := callCount
 
 	time.Sleep(time.Millisecond)
 
-	a.SetTab(0)
-	_, _ = a.CaptureEvent(vaxis.Key{Keycode: '2'})
+	a.SetTab(0) // switch away
+	_, _ = a.CaptureEvent(vaxis.Key{Keycode: '3'}) // switch to datasets via key
 
 	<-done
 
@@ -762,17 +904,56 @@ func TestApp_TabSwitch_NoRefetchWhenFresh(t *testing.T) {
 			},
 		},
 		&truenas.MockSnapshotService{},
+		&truenas.MockSystemService{
+			GetInfoFunc: func(ctx context.Context) (*truenas.SystemInfo, error) {
+				return &truenas.SystemInfo{Hostname: "test", Model: "Test"}, nil
+			},
+			GetVersionFunc: func(ctx context.Context) (string, error) { return "v1", nil },
+		},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{
+			ListFunc: func(ctx context.Context) ([]truenas.NetworkInterface, error) { return nil, nil },
+		},
+		&truenas.MockAppService{
+			ListAppsFunc: func(ctx context.Context) ([]truenas.App, error) { return nil, nil },
+		},
 	)
 
 	a := app.New(app.Params{Services: svc, ServerName: "test-server", StaleTTL: time.Hour})
-	a.SetTab(1)
+	a.SetTab(2) // datasets
 	_ = a.LoadActiveView(context.Background())
 	afterLoad := callCount
 
-	a.SetTab(0)
-	_, _ = a.CaptureEvent(vaxis.Key{Keycode: '2'})
+	a.SetTab(0) // switch away
+	_, _ = a.CaptureEvent(vaxis.Key{Keycode: '3'}) // switch back to datasets
 
 	if callCount != afterLoad {
 		t.Errorf("expected no refetch when fresh, but ListDatasetsFunc called %d more times", callCount-afterLoad)
+	}
+}
+
+func TestApp_DashboardNeverStale(t *testing.T) {
+	svc := newTestServicesWithData()
+	a := app.New(app.Params{Services: svc, ServerName: "test-server", StaleTTL: 0})
+
+	refetchCount := 0
+	a.SetPostEvent(func(ev vaxis.Event) {
+		if _, ok := ev.(views.ViewLoaded); ok {
+			refetchCount++
+		}
+	})
+
+	// Load dashboard
+	_ = a.LoadActiveView(context.Background())
+	time.Sleep(time.Millisecond)
+
+	// Switch away and back to dashboard
+	a.SetTab(1)
+	_, _ = a.CaptureEvent(vaxis.Key{Keycode: '1'}) // back to dashboard
+
+	// Dashboard should not trigger a refetch even with StaleTTL=0
+	time.Sleep(10 * time.Millisecond)
+	if refetchCount > 0 {
+		t.Error("dashboard should never be refetched via stale mechanism")
 	}
 }
