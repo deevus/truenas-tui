@@ -48,8 +48,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
-
 	wsCfg := client.WebSocketConfig{
 		Host:               serverCfg.Host,
 		Port:               serverCfg.Port,
@@ -58,6 +56,9 @@ func main() {
 		InsecureSkipVerify: serverCfg.InsecureSkipVerify,
 	}
 
+	// SSH config validation stays synchronous — these are config issues
+	// that require the user to fix their config and re-run.
+	var sshCfg *client.SSHConfig
 	if serverCfg.SSH != nil {
 		sshHost := serverCfg.SSH.Host
 		if sshHost == "" {
@@ -85,38 +86,43 @@ func main() {
 			os.Exit(1)
 		}
 
-		sshClient, err := client.NewSSHClient(&client.SSHConfig{
+		sshCfg = &client.SSHConfig{
 			Host:               sshHost,
 			Port:               serverCfg.SSH.Port,
 			User:               serverCfg.SSH.Username,
 			PrivateKey:         string(privateKey),
 			HostKeyFingerprint: serverCfg.SSH.HostKeyFingerprint,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating SSH client: %v\n", err)
-			os.Exit(1)
 		}
-		wsCfg.Fallback = sshClient
 	}
 
-	wsClient, err := client.NewWebSocketClient(wsCfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating client: %v\n", err)
-		os.Exit(1)
-	}
+	root := app.New(app.Params{
+		ServerName: serverName,
+		StaleTTL:   30 * time.Second,
+		Connect: func(ctx context.Context) (*internal.Services, error) {
+			if sshCfg != nil {
+				sshClient, err := client.NewSSHClient(sshCfg)
+				if err != nil {
+					return nil, fmt.Errorf("SSH: %w", err)
+				}
+				wsCfg.Fallback = sshClient
+			}
 
-	if err := wsClient.Connect(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error connecting to %s: %v\n", serverCfg.Host, err)
-		os.Exit(1)
-	}
+			wsClient, err := client.NewWebSocketClient(wsCfg)
+			if err != nil {
+				return nil, err
+			}
 
-	version := wsClient.Version()
-	svc := internal.NewServices(
-		truenas.NewDatasetService(wsClient, version),
-		truenas.NewSnapshotService(wsClient, version),
-	)
+			if err := wsClient.Connect(ctx); err != nil {
+				return nil, err
+			}
 
-	root := app.New(svc, serverName, 30*time.Second)
+			version := wsClient.Version()
+			return internal.NewServices(
+				truenas.NewDatasetService(wsClient, version),
+				truenas.NewSnapshotService(wsClient, version),
+			), nil
+		},
+	})
 
 	vxApp, err := vxfw.NewApp(vaxis.Options{})
 	if err != nil {
@@ -124,7 +130,6 @@ func main() {
 	}
 
 	root.SetPostEvent(vxApp.PostEvent)
-	root.LoadAll(ctx)
 
 	if err := vxApp.Run(root); err != nil {
 		log.Fatal(err)

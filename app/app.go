@@ -2,41 +2,79 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
 	"git.sr.ht/~rockorager/vaxis"
 	"git.sr.ht/~rockorager/vaxis/vxfw"
+	"git.sr.ht/~rockorager/vaxis/vxfw/richtext"
 	"github.com/deevus/truenas-tui/internal"
 	"github.com/deevus/truenas-tui/views"
 	"github.com/deevus/truenas-tui/widgets"
 )
 
+// Connected is posted when the background connection goroutine succeeds.
+type Connected struct {
+	Services *internal.Services
+}
+
+// ConnectFailed is posted when the background connection goroutine fails.
+type ConnectFailed struct {
+	Err error
+}
+
+// Params holds configuration for creating an App.
+type Params struct {
+	ServerName string
+	StaleTTL   time.Duration
+	Services   *internal.Services                                   // immediate (tests)
+	Connect    func(ctx context.Context) (*internal.Services, error) // async (main)
+}
+
 // App is the root vxfw widget for truenas-tui.
 type App struct {
-	services   *internal.Services
 	serverName string
+	staleTTL   time.Duration
 	tabBar     *widgets.TabBar
+	services   *internal.Services
 	pools      *views.PoolsView
 	datasets   *views.DatasetsView
 	snapshots  *views.SnapshotsView
 	postEvent  func(vaxis.Event)
+	connectFn  func(ctx context.Context) (*internal.Services, error)
+	connected  bool
+	connectErr error
 }
 
-// New creates the root App widget connected to the given services.
-func New(svc *internal.Services, serverName string, staleTTL time.Duration) *App {
-	return &App{
-		services:   svc,
-		serverName: serverName,
+// New creates the root App widget.
+// If p.Services is set, the app starts connected immediately (useful for tests).
+// If p.Connect is set, the app starts in a connecting state and runs the
+// callback from the Init event in a background goroutine.
+func New(p Params) *App {
+	a := &App{
+		serverName: p.ServerName,
+		staleTTL:   p.StaleTTL,
+		connectFn:  p.Connect,
 		tabBar:     widgets.NewTabBar([]string{"Pools", "Datasets", "Snapshots"}),
-		pools:      views.NewPoolsView(views.PoolsViewParams{Service: svc.Datasets, StaleTTL: staleTTL}),
-		datasets:   views.NewDatasetsView(views.DatasetsViewParams{Service: svc.Datasets, StaleTTL: staleTTL}),
-		snapshots:  views.NewSnapshotsView(views.SnapshotsViewParams{Service: svc.Snapshots, StaleTTL: staleTTL}),
 	}
+	if p.Services != nil {
+		a.initServices(p.Services)
+	}
+	return a
+}
+
+// initServices creates views backed by the given services and marks the app
+// as connected.
+func (a *App) initServices(svc *internal.Services) {
+	a.services = svc
+	a.pools = views.NewPoolsView(views.PoolsViewParams{Service: svc.Datasets, StaleTTL: a.staleTTL})
+	a.datasets = views.NewDatasetsView(views.DatasetsViewParams{Service: svc.Datasets, StaleTTL: a.staleTTL})
+	a.snapshots = views.NewSnapshotsView(views.SnapshotsViewParams{Service: svc.Snapshots, StaleTTL: a.staleTTL})
+	a.connected = true
 }
 
 // SetPostEvent sets the function used to post events to the vaxis event loop.
-// Must be called before LoadAll.
 func (a *App) SetPostEvent(fn func(vaxis.Event)) {
 	a.postEvent = fn
 }
@@ -56,9 +94,17 @@ func (a *App) ServerName() string {
 	return a.serverName
 }
 
+// Connected reports whether the app has an active connection.
+func (a *App) IsConnected() bool {
+	return a.connected
+}
+
 // LoadAll loads data for all views in parallel using goroutines.
 // Each view posts a ViewLoaded event when done.
 func (a *App) LoadAll(ctx context.Context) {
+	if !a.connected {
+		return
+	}
 	for tab := 0; tab < 3; tab++ {
 		go func(t int) {
 			var err error
@@ -79,6 +125,9 @@ func (a *App) LoadAll(ctx context.Context) {
 
 // LoadActiveView fetches data for the currently active view.
 func (a *App) LoadActiveView(ctx context.Context) error {
+	if !a.connected {
+		return nil
+	}
 	switch a.tabBar.Active() {
 	case 0:
 		return a.pools.Load(ctx)
@@ -91,6 +140,9 @@ func (a *App) LoadActiveView(ctx context.Context) error {
 }
 
 func (a *App) activeView() vxfw.Widget {
+	if !a.connected {
+		return nil
+	}
 	switch a.tabBar.Active() {
 	case 0:
 		return a.pools
@@ -103,8 +155,29 @@ func (a *App) activeView() vxfw.Widget {
 	}
 }
 
-// Draw renders the tab bar and active view.
+// drawMessage renders a single dimmed text message.
+func drawMessage(ctx vxfw.DrawContext, owner vxfw.Widget, text string) (vxfw.Surface, error) {
+	s := vxfw.NewSurface(ctx.Max.Width, ctx.Max.Height, owner)
+	label := richtext.New([]vaxis.Segment{
+		{Text: text, Style: vaxis.Style{Attribute: vaxis.AttrDim}},
+	})
+	labelSurf, err := label.Draw(ctx.WithMax(vxfw.Size{Width: ctx.Max.Width, Height: 1}))
+	if err != nil {
+		return vxfw.Surface{}, err
+	}
+	s.AddChild(0, 0, labelSurf)
+	return s, nil
+}
+
+// Draw renders the tab bar and active view, or a status message if not connected.
 func (a *App) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
+	if a.connectErr != nil {
+		return drawMessage(ctx, a, fmt.Sprintf("Connection failed: %v", a.connectErr))
+	}
+	if !a.connected {
+		return drawMessage(ctx, a, fmt.Sprintf("Connecting to %s...", a.serverName))
+	}
+
 	s := vxfw.NewSurface(ctx.Max.Width, ctx.Max.Height, a)
 
 	// Tab bar (1 row)
@@ -130,12 +203,16 @@ func (a *App) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
 func (a *App) CaptureEvent(ev vaxis.Event) (vxfw.Command, error) {
 	switch ev := ev.(type) {
 	case vaxis.Key:
+		if ev.Matches('q') {
+			return vxfw.QuitCmd{}, nil
+		}
+		if !a.connected {
+			return nil, nil
+		}
 		prev := a.tabBar.Active()
 		switch {
-		case ev.Matches('q'):
-			return vxfw.QuitCmd{}, nil
 		case ev.Matches('r'):
-			_ = a.LoadActiveView(context.Background())
+			a.loadActiveViewAsync()
 			return vxfw.ConsumeAndRedraw(), nil
 		case ev.Matches('1'):
 			a.tabBar.SetActive(0)
@@ -158,27 +235,61 @@ func (a *App) CaptureEvent(ev vaxis.Event) (vxfw.Command, error) {
 	return nil, nil
 }
 
-// refetchIfStale reloads the active view's data if it has become stale.
+// loadActiveViewAsync loads the active view's data in a background goroutine.
+func (a *App) loadActiveViewAsync() {
+	if !a.connected {
+		return
+	}
+	tab := a.tabBar.Active()
+	go func() {
+		err := a.LoadActiveView(context.Background())
+		if a.postEvent != nil {
+			a.postEvent(views.ViewLoaded{Tab: tab, Err: err})
+		}
+	}()
+}
+
+// refetchIfStale reloads the active view's data in the background if stale.
 func (a *App) refetchIfStale() {
+	if !a.connected {
+		return
+	}
+	var stale bool
 	switch a.tabBar.Active() {
 	case 0:
-		if a.pools.Stale() {
-			_ = a.pools.Load(context.Background())
-		}
+		stale = a.pools.Stale()
 	case 1:
-		if a.datasets.Stale() {
-			_ = a.datasets.Load(context.Background())
-		}
+		stale = a.datasets.Stale()
 	case 2:
-		if a.snapshots.Stale() {
-			_ = a.snapshots.Load(context.Background())
-		}
+		stale = a.snapshots.Stale()
+	}
+	if stale {
+		a.loadActiveViewAsync()
 	}
 }
 
 // HandleEvent delegates to the active view, and handles custom events.
 func (a *App) HandleEvent(ev vaxis.Event, phase vxfw.EventPhase) (vxfw.Command, error) {
 	switch ev := ev.(type) {
+	case vxfw.Init:
+		if a.connectFn != nil {
+			go func() {
+				svc, err := a.connectFn(context.Background())
+				if err != nil {
+					a.postEvent(ConnectFailed{Err: err})
+				} else {
+					a.postEvent(Connected{Services: svc})
+				}
+			}()
+		}
+		return nil, nil
+	case Connected:
+		a.initServices(ev.Services)
+		a.LoadAll(context.Background())
+		return vxfw.RedrawCmd{}, nil
+	case ConnectFailed:
+		a.connectErr = ev.Err
+		return vxfw.RedrawCmd{}, nil
 	case views.ViewLoaded:
 		if ev.Err != nil {
 			log.Printf("error loading tab %d: %v", ev.Tab, ev.Err)
@@ -188,8 +299,10 @@ func (a *App) HandleEvent(ev vaxis.Event, phase vxfw.EventPhase) (vxfw.Command, 
 		type handler interface {
 			HandleEvent(vaxis.Event, vxfw.EventPhase) (vxfw.Command, error)
 		}
-		if h, ok := a.activeView().(handler); ok {
-			return h.HandleEvent(ev, phase)
+		if v := a.activeView(); v != nil {
+			if h, ok := v.(handler); ok {
+				return h.HandleEvent(ev, phase)
+			}
 		}
 	}
 	return nil, nil
