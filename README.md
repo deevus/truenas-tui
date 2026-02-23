@@ -19,17 +19,18 @@ port = 443
 username = "admin"
 api_key = "1-your-api-key"
 
+# SSH is optional — used as fallback for version detection
 [servers.home.ssh]
-host = "truenas.local"
-port = 22
-user = "root"
+host = "truenas.local"        # defaults to server host
+port = 22                     # defaults to 22
+username = "root"             # defaults to server username
 private_key_path = "~/.ssh/id_ed25519"
 host_key_fingerprint = "SHA256:..."
 ```
 
 Generate an API key in the TrueNAS web UI under **Credentials > API Keys**.
 
-The SSH section is required for the WebSocket client to detect the TrueNAS version on connect. The `host_key_fingerprint` can be obtained with:
+The SSH section is optional. When configured, it provides a fallback transport for version detection. Paths in `private_key_path` support `~` and environment variable expansion. The `host_key_fingerprint` can be obtained with:
 
 ```bash
 ssh-keyscan truenas.local 2>/dev/null | ssh-keygen -lf -
