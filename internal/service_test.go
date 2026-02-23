@@ -8,15 +8,31 @@ import (
 )
 
 func TestNewServices(t *testing.T) {
-	mock := &truenas.MockDatasetService{}
-	mockSnap := &truenas.MockSnapshotService{}
-
-	svc := internal.NewServices(mock, mockSnap)
+	svc := internal.NewServices(
+		&truenas.MockDatasetService{},
+		&truenas.MockSnapshotService{},
+		&truenas.MockSystemService{},
+		&truenas.MockReportingService{},
+		&truenas.MockInterfaceService{},
+		&truenas.MockAppService{},
+	)
 
 	if svc.Datasets == nil {
 		t.Fatal("expected Datasets service")
 	}
 	if svc.Snapshots == nil {
 		t.Fatal("expected Snapshots service")
+	}
+	if svc.System == nil {
+		t.Fatal("expected System service")
+	}
+	if svc.Reporting == nil {
+		t.Fatal("expected Reporting service")
+	}
+	if svc.Interfaces == nil {
+		t.Fatal("expected Interfaces service")
+	}
+	if svc.Apps == nil {
+		t.Fatal("expected Apps service")
 	}
 }
