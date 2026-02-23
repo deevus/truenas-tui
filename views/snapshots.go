@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"git.sr.ht/~rockorager/vaxis"
 	"git.sr.ht/~rockorager/vaxis/vxfw"
@@ -12,16 +13,28 @@ import (
 	"github.com/dustin/go-humanize"
 )
 
+// SnapshotsViewParams holds configuration for creating a SnapshotsView.
+type SnapshotsViewParams struct {
+	Service  truenas.SnapshotServiceAPI
+	StaleTTL time.Duration
+}
+
 // SnapshotsView displays a list of TrueNAS ZFS snapshots.
 type SnapshotsView struct {
 	service   truenas.SnapshotServiceAPI
 	snapshots []truenas.Snapshot
 	list      list.Dynamic
+	loaded    bool
+	loadedAt  time.Time
+	staleTTL  time.Duration
 }
 
-// NewSnapshotsView creates a SnapshotsView backed by the given service.
-func NewSnapshotsView(svc truenas.SnapshotServiceAPI) *SnapshotsView {
-	sv := &SnapshotsView{service: svc}
+// NewSnapshotsView creates a SnapshotsView backed by the given params.
+func NewSnapshotsView(p SnapshotsViewParams) *SnapshotsView {
+	sv := &SnapshotsView{
+		service:  p.Service,
+		staleTTL: p.StaleTTL,
+	}
 	sv.list.DrawCursor = true
 	sv.list.Builder = sv.buildItem
 	return sv
@@ -34,7 +47,22 @@ func (sv *SnapshotsView) Load(ctx context.Context) error {
 		return err
 	}
 	sv.snapshots = snapshots
+	sv.loaded = true
+	sv.loadedAt = time.Now()
 	return nil
+}
+
+// Loaded reports whether data has been successfully fetched.
+func (sv *SnapshotsView) Loaded() bool {
+	return sv.loaded
+}
+
+// Stale reports whether the cached data is older than the configured TTL.
+func (sv *SnapshotsView) Stale() bool {
+	if !sv.loaded {
+		return true
+	}
+	return time.Since(sv.loadedAt) > sv.staleTTL
 }
 
 // Snapshots returns the currently loaded snapshots.
@@ -76,8 +104,12 @@ func (sv *SnapshotsView) buildItem(i uint, cursor uint) vxfw.Widget {
 	})
 }
 
-// Draw renders the snapshots list.
+// Draw renders the snapshots list, or a loading state if data hasn't arrived.
 func (sv *SnapshotsView) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
+	if !sv.loaded {
+		return drawLoadingState(ctx, sv)
+	}
+
 	s := vxfw.NewSurface(ctx.Max.Width, ctx.Max.Height, sv)
 
 	header := richtext.New([]vaxis.Segment{

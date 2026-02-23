@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"git.sr.ht/~rockorager/vaxis"
 	"git.sr.ht/~rockorager/vaxis/vxfw"
@@ -12,16 +13,28 @@ import (
 	"github.com/dustin/go-humanize"
 )
 
+// DatasetsViewParams holds configuration for creating a DatasetsView.
+type DatasetsViewParams struct {
+	Service  truenas.DatasetServiceAPI
+	StaleTTL time.Duration
+}
+
 // DatasetsView displays a list of TrueNAS datasets.
 type DatasetsView struct {
 	service  truenas.DatasetServiceAPI
 	datasets []truenas.Dataset
 	list     list.Dynamic
+	loaded   bool
+	loadedAt time.Time
+	staleTTL time.Duration
 }
 
-// NewDatasetsView creates a DatasetsView backed by the given service.
-func NewDatasetsView(svc truenas.DatasetServiceAPI) *DatasetsView {
-	dv := &DatasetsView{service: svc}
+// NewDatasetsView creates a DatasetsView backed by the given params.
+func NewDatasetsView(p DatasetsViewParams) *DatasetsView {
+	dv := &DatasetsView{
+		service:  p.Service,
+		staleTTL: p.StaleTTL,
+	}
 	dv.list.DrawCursor = true
 	dv.list.Builder = dv.buildItem
 	return dv
@@ -34,7 +47,22 @@ func (dv *DatasetsView) Load(ctx context.Context) error {
 		return err
 	}
 	dv.datasets = datasets
+	dv.loaded = true
+	dv.loadedAt = time.Now()
 	return nil
+}
+
+// Loaded reports whether data has been successfully fetched.
+func (dv *DatasetsView) Loaded() bool {
+	return dv.loaded
+}
+
+// Stale reports whether the cached data is older than the configured TTL.
+func (dv *DatasetsView) Stale() bool {
+	if !dv.loaded {
+		return true
+	}
+	return time.Since(dv.loadedAt) > dv.staleTTL
 }
 
 // Datasets returns the currently loaded datasets.
@@ -62,8 +90,12 @@ func (dv *DatasetsView) buildItem(i uint, cursor uint) vxfw.Widget {
 	})
 }
 
-// Draw renders the datasets list.
+// Draw renders the datasets list, or a loading state if data hasn't arrived.
 func (dv *DatasetsView) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
+	if !dv.loaded {
+		return drawLoadingState(ctx, dv)
+	}
+
 	s := vxfw.NewSurface(ctx.Max.Width, ctx.Max.Height, dv)
 
 	header := richtext.New([]vaxis.Segment{

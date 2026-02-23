@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"git.sr.ht/~rockorager/vaxis"
 	"git.sr.ht/~rockorager/vaxis/vxfw"
@@ -12,16 +13,28 @@ import (
 	"github.com/dustin/go-humanize"
 )
 
-// PoolsView displays a list of TrueNAS storage pools.
-type PoolsView struct {
-	service truenas.DatasetServiceAPI
-	pools   []truenas.Pool
-	list    list.Dynamic
+// PoolsViewParams holds configuration for creating a PoolsView.
+type PoolsViewParams struct {
+	Service  truenas.DatasetServiceAPI
+	StaleTTL time.Duration
 }
 
-// NewPoolsView creates a PoolsView backed by the given service.
-func NewPoolsView(svc truenas.DatasetServiceAPI) *PoolsView {
-	pv := &PoolsView{service: svc}
+// PoolsView displays a list of TrueNAS storage pools.
+type PoolsView struct {
+	service  truenas.DatasetServiceAPI
+	pools    []truenas.Pool
+	list     list.Dynamic
+	loaded   bool
+	loadedAt time.Time
+	staleTTL time.Duration
+}
+
+// NewPoolsView creates a PoolsView backed by the given params.
+func NewPoolsView(p PoolsViewParams) *PoolsView {
+	pv := &PoolsView{
+		service:  p.Service,
+		staleTTL: p.StaleTTL,
+	}
 	pv.list.DrawCursor = true
 	pv.list.Builder = pv.buildItem
 	return pv
@@ -34,7 +47,22 @@ func (pv *PoolsView) Load(ctx context.Context) error {
 		return err
 	}
 	pv.pools = pools
+	pv.loaded = true
+	pv.loadedAt = time.Now()
 	return nil
+}
+
+// Loaded reports whether data has been successfully fetched.
+func (pv *PoolsView) Loaded() bool {
+	return pv.loaded
+}
+
+// Stale reports whether the cached data is older than the configured TTL.
+func (pv *PoolsView) Stale() bool {
+	if !pv.loaded {
+		return true
+	}
+	return time.Since(pv.loadedAt) > pv.staleTTL
 }
 
 // Pools returns the currently loaded pools.
@@ -67,8 +95,12 @@ func (pv *PoolsView) buildItem(i uint, cursor uint) vxfw.Widget {
 	})
 }
 
-// Draw renders the pools list.
+// Draw renders the pools list, or a loading state if data hasn't arrived.
 func (pv *PoolsView) Draw(ctx vxfw.DrawContext) (vxfw.Surface, error) {
+	if !pv.loaded {
+		return drawLoadingState(ctx, pv)
+	}
+
 	s := vxfw.NewSurface(ctx.Max.Width, ctx.Max.Height, pv)
 
 	// Header row
