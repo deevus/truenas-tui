@@ -1,3 +1,4 @@
 docs/plans/
 truenas-tui
 coverage.out
+dist/

@@ -1,0 +1,8 @@
+[tools]
+go = "1.26.0"
+git-cliff = "latest"
+goreleaser = "latest"
+
+[tasks.build]
+description = "Build the project"
+run = "go build ./..."

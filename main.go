@@ -20,6 +20,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var version = "dev"
+
 func main() {
 	serverFlag := flag.String("server", "", "server profile name from config")
 	configFlag := flag.String("config", config.DefaultPath(), "path to config file")
