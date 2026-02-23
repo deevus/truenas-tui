@@ -5,7 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
+	"strconv"
+	"time"
 
 	"git.sr.ht/~rockorager/vaxis"
 	"git.sr.ht/~rockorager/vaxis/vxfw"
@@ -14,6 +17,7 @@ import (
 	"github.com/deevus/truenas-tui/app"
 	"github.com/deevus/truenas-tui/config"
 	"github.com/deevus/truenas-tui/internal"
+	"golang.org/x/crypto/ssh"
 )
 
 func main() {
@@ -44,44 +48,58 @@ func main() {
 		os.Exit(1)
 	}
 
-	if serverCfg.SSH == nil {
-		fmt.Fprintf(os.Stderr, "Error: server %q requires [servers.%s.ssh] config for connection setup\n", serverName, serverName)
-		os.Exit(1)
-	}
-
-	privateKey, err := os.ReadFile(serverCfg.SSH.PrivateKeyPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading SSH private key %s: %v\n", serverCfg.SSH.PrivateKeyPath, err)
-		os.Exit(1)
-	}
-
-	sshHost := serverCfg.SSH.Host
-	if sshHost == "" {
-		sshHost = serverCfg.Host
-	}
-
-	sshClient, err := client.NewSSHClient(&client.SSHConfig{
-		Host:               sshHost,
-		Port:               serverCfg.SSH.Port,
-		User:               serverCfg.SSH.User,
-		PrivateKey:         string(privateKey),
-		HostKeyFingerprint: serverCfg.SSH.HostKeyFingerprint,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating SSH client: %v\n", err)
-		os.Exit(1)
-	}
-
 	ctx := context.Background()
 
-	wsClient, err := client.NewWebSocketClient(client.WebSocketConfig{
+	wsCfg := client.WebSocketConfig{
 		Host:               serverCfg.Host,
 		Port:               serverCfg.Port,
 		Username:           serverCfg.Username,
 		APIKey:             serverCfg.APIKey,
 		InsecureSkipVerify: serverCfg.InsecureSkipVerify,
-		Fallback:           sshClient,
-	})
+	}
+
+	if serverCfg.SSH != nil {
+		sshHost := serverCfg.SSH.Host
+		if sshHost == "" {
+			sshHost = serverCfg.Host
+		}
+
+		if serverCfg.SSH.HostKeyFingerprint == "" {
+			fingerprint, err := scanHostKey(sshHost, serverCfg.SSH.Port)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: host_key_fingerprint is required for SSH.\n")
+				fmt.Fprintf(os.Stderr, "Could not auto-detect: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Get it with: ssh-keyscan -p %d %s 2>/dev/null | ssh-keygen -lf -\n", serverCfg.SSH.Port, sshHost)
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "Error: host_key_fingerprint is required for SSH.\n")
+			fmt.Fprintf(os.Stderr, "Detected fingerprint for %s:\n\n", sshHost)
+			fmt.Fprintf(os.Stderr, "  host_key_fingerprint = %q\n\n", fingerprint)
+			fmt.Fprintf(os.Stderr, "Add this to [servers.%s.ssh] in your config.\n", serverName)
+			os.Exit(1)
+		}
+
+		privateKey, err := os.ReadFile(serverCfg.SSH.PrivateKeyPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading SSH private key %s: %v\n", serverCfg.SSH.PrivateKeyPath, err)
+			os.Exit(1)
+		}
+
+		sshClient, err := client.NewSSHClient(&client.SSHConfig{
+			Host:               sshHost,
+			Port:               serverCfg.SSH.Port,
+			User:               serverCfg.SSH.Username,
+			PrivateKey:         string(privateKey),
+			HostKeyFingerprint: serverCfg.SSH.HostKeyFingerprint,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating SSH client: %v\n", err)
+			os.Exit(1)
+		}
+		wsCfg.Fallback = sshClient
+	}
+
+	wsClient, err := client.NewWebSocketClient(wsCfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating client: %v\n", err)
 		os.Exit(1)
@@ -100,6 +118,11 @@ func main() {
 
 	root := app.New(svc, serverName)
 
+	if err := root.LoadActiveView(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading data: %v\n", err)
+		os.Exit(1)
+	}
+
 	vxApp, err := vxfw.NewApp(vaxis.Options{})
 	if err != nil {
 		log.Fatal(err)
@@ -108,4 +131,26 @@ func main() {
 	if err := vxApp.Run(root); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// scanHostKey connects to an SSH server and returns the host key fingerprint.
+func scanHostKey(host string, port int) (string, error) {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	var fingerprint string
+	cfg := &ssh.ClientConfig{
+		User: "probe",
+		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
+			fingerprint = ssh.FingerprintSHA256(key)
+			return nil
+		},
+		Timeout: 5 * time.Second,
+	}
+	conn, err := ssh.Dial("tcp", addr, cfg)
+	if conn != nil {
+		conn.Close()
+	}
+	if fingerprint != "" {
+		return fingerprint, nil
+	}
+	return "", fmt.Errorf("could not connect to %s: %v", addr, err)
 }
